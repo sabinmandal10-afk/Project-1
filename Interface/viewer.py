@@ -426,11 +426,15 @@ class SimulationViewer:
             return
 
         reach = max(snap.width, snap.height) * 0.035
-        best, best_d = None, reach
+        best, best_key = None, None
         for view in snap.organisms:
             d = ((view.x - event.xdata) ** 2 + (view.y - event.ydata) ** 2) ** 0.5
-            if d < best_d:
-                best, best_d = view, d
+            if d >= reach:
+                continue
+            # On a tie (an animal standing on a plant) prefer the animal
+            key = (round(d, 6), 1 if view.kind == "Producer" else 0)
+            if best_key is None or key < best_key:
+                best, best_key = view, key
 
         self.selected = best.ref if best else None
         self.refresh()

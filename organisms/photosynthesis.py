@@ -1,4 +1,5 @@
 from data.species import SPECIES
+from environment.world import FERTILITY_BONUS
 
 
 # Which world condition powers which producer food source
@@ -35,11 +36,20 @@ def photosynthesize(organism, world):
 
     gain = rate * getattr(world, level_name)
 
+    # Rich soil (from rotted remains and recyclers) boosts growth
+    fertility_at = getattr(world, "fertility_at", None)
+    if fertility_at is not None:
+        gain *= 1 + FERTILITY_BONUS * fertility_at(organism.x, organism.y)
+
     cap = data["starting_energy"] * MAX_ENERGY_FACTOR
     new_energy = min(organism.energy + gain, cap)
 
     gained = max(0, new_energy - organism.energy)
     organism.energy = new_energy
+
+    tracker = getattr(world, "lineage_tracker", None)
+    if tracker is not None and gained > 0:
+        tracker.record_meal(organism, amount=gained, source_role="environment")
 
     return gained
 

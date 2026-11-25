@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 
 from data.species import SPECIES
 from organisms.energy import energy_cap
+from organisms.evolution import mean_genes, speed_gene, sense_gene
+from environment.world import FERTILITY_CELL, FERTILITY_SATURATION
 from organisms.photosynthesis import MAX_ENERGY_FACTOR
 from organisms.reproduction import GLOBAL_POPULATION_LIMIT
 
@@ -24,6 +26,9 @@ class OrganismView:
     energy: float
     age: int
     fullness: float        # energy as a share of what it can hold (0..1)
+    lifespan: int = 100    # age at which it dies of old age
+    speed_gene: float = 1.0
+    sense_gene: float = 1.0
 
 
 @dataclass
@@ -52,6 +57,11 @@ class Snapshot:
     remains_total: float = 0.0
     remains_patches: list = field(default_factory=list)  # (x, y, amount)
     resources: list = field(default_factory=list)        # (name, quantity)
+    traits: dict = field(default_factory=dict)           # species -> (speed gene, sense gene)
+    fertility: list = field(default_factory=list)        # (cell_x, cell_y, richness 0..1)
+    fertility_cell: float = FERTILITY_CELL
+    fertility_mean: float = 0.0
+    stats: dict = field(default_factory=dict)            # the world's running tallies
 
 
 def holding_capacity(species):
@@ -79,7 +89,14 @@ def take_snapshot(world):
         remains_total=world.organic_remains,
         remains_patches=[(p.x, p.y, p.amount) for p in world.remains_patches],
         resources=[(r.name, r.quantity) for r in world.resources],
+        fertility=[
+            (cx, cy, min(1.0, value / FERTILITY_SATURATION))
+            for (cx, cy), value in getattr(world, "fertility", {}).items()
+        ],
+        stats=dict(world.stats),
     )
+    if snap.fertility:
+        snap.fertility_mean = sum(f for _, _, f in snap.fertility) / len(snap.fertility)
 
     by_species = {name: [] for name in SPECIES}
 
@@ -93,6 +110,8 @@ def take_snapshot(world):
             kind=SPECIES[o.species]["type"],
             x=o.x, y=o.y, energy=o.energy, age=o.age,
             fullness=max(0.0, min(1.0, o.energy / cap)) if cap else 0.0,
+            lifespan=o.lifespan,
+            speed_gene=speed_gene(o), sense_gene=sense_gene(o),
         )
         snap.organisms.append(view)
         by_species[o.species].append(view)
@@ -111,6 +130,7 @@ def take_snapshot(world):
             stats = EnergyStats()
         snap.energy[name] = stats
         snap.total_energy += stats.total
+        snap.traits[name] = mean_genes(m.ref for m in members)
 
     snap.total_population = len(snap.organisms)
     return snap

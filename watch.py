@@ -4,6 +4,7 @@ Watch GAIA live (Pygame 60 FPS viewer by default).
     python watch.py                      open the Pygame viewer
     python watch.py --paused             open paused (press Space or Play)
     python watch.py --demo               schedule a drought and a plague
+    python watch.py --showcase           play the guided story for presentations
     python watch.py --matplotlib         use the original Matplotlib viewer
     python watch.py --png frame.png --turns 300    save a static picture
 """
@@ -20,6 +21,12 @@ def parse_args():
     parser.add_argument("--paused", action="store_true", help="start paused")
     parser.add_argument("--demo", action="store_true",
                         help="schedule a drought (turn 200) and a plague (turn 350)")
+    parser.add_argument("--showcase", action="store_true",
+                        help="start the guided Showcase story (S toggles it)")
+    parser.add_argument("--pause-on-caption", action="store_true",
+                        help="pause the story at every caption until a key is pressed")
+    parser.add_argument("--speaker-notes", action="store_true",
+                        help="start showcase with hidden speaker notes visible")
     parser.add_argument("--no-seasons", action="store_true")
     parser.add_argument("--matplotlib", action="store_true",
                         help="use the legacy Matplotlib viewer")
@@ -69,7 +76,10 @@ def main():
         nearest = min((i for i, v in enumerate(SPEEDS) if v != "max"),
                       key=lambda i: abs(SPEEDS[i] - args.speed))
         viewer = PygameViewer(sim, recorder=recorder, stress=stress,
-                              speed_index=nearest, start_paused=args.paused)
+                              speed_index=nearest, start_paused=args.paused,
+                              showcase=args.showcase,
+                              pause_on_caption=args.pause_on_caption,
+                              speaker_notes=args.speaker_notes)
         if args.turns:
             viewer._advance(args.turns)
         viewer.show()

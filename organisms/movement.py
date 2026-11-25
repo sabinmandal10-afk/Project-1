@@ -1,4 +1,5 @@
 from data.species import SPECIES
+from organisms.evolution import effective_speed
 
 
 # Energy spent per unit of distance moved
@@ -15,7 +16,7 @@ def move_toward(organism, world, target_x, target_y):
         print(f"{organism.name} cannot move. It is dead!")
         return 0
 
-    speed = SPECIES[organism.species]["movement_speed"]
+    speed = effective_speed(organism)
 
     if speed <= 0:
         print(f"{organism.species} cannot move!")

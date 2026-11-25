@@ -21,6 +21,10 @@ def remains_reach(species):
     return REMAINS_REACH.get(species, DEFAULT_REMAINS_REACH)
 
 
+# Share of the remains a recycler eats that it returns to the soil as
+# nutrients (the nutrient cycle: dead things -> soil -> plants)
+RECYCLER_SOIL_SHARE = 0.5
+
 # Grazing never takes a plant below this much energy, so plants regrow
 PLANT_RESERVE = 40
 
@@ -85,6 +89,11 @@ def graze(consumer, world, plant):
     energy_gained = bite * GRAZING_EFFICIENCY
     consumer.energy += energy_gained
     world.stats["meals_grazed"] += 1
+    world.stats[f"ate:{consumer.species}>{plant.species}"] += 1
+
+    tracker = getattr(world, "lineage_tracker", None)
+    if tracker is not None:
+        tracker.record_meal(consumer, amount=energy_gained, source_role="producer")
 
     print(f"\n{consumer.name} grazed on {plant.name}!")
     print(f"Energy gained: {energy_gained}")
@@ -154,6 +163,14 @@ def feed(organism, world, food_name, amount):
     energy_gained = consumed
     organism.energy += energy_gained
     world.stats["remains_eaten"] += consumed
+    world.stats[f"ate:{organism.species}>Remains"] += 1
+    soil_returned = consumed * RECYCLER_SOIL_SHARE
+    world.add_fertility(organism.x, organism.y, soil_returned)
+
+    tracker = getattr(world, "lineage_tracker", None)
+    if tracker is not None:
+        tracker.record_meal(organism, amount=energy_gained, source_role="herbivore")
+        tracker.record_energy("decomposer", "environment", soil_returned)
 
     print(f"\n{organism.name} has consumed organic remains!")
     print(f"Remains consumed: {consumed}")

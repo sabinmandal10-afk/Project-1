@@ -5,6 +5,7 @@ from data.species import SPECIES
 from data.behavior import BEHAVIOR
 from organisms.feeding import GRAZE_RANGE, BITE_SIZE, remains_reach
 from organisms.hunting import HUNT_RANGE
+from organisms.evolution import effective_speed, effective_perception
 
 
 # Grazers ignore plants with less energy than this (lets seedlings grow)
@@ -61,7 +62,15 @@ def _foods_of(species):
 
 
 def speed_of(organism):
-    return SPECIES[organism.species]["movement_speed"]
+    return effective_speed(organism)
+
+
+def perception_of(organism):
+    """How far this organism can sense (species value times its own gene)."""
+    profile = BEHAVIOR.get(organism.species)
+    if profile is None:
+        return 0
+    return effective_perception(organism, profile["perception"])
 
 
 def hunger(organism):
@@ -86,7 +95,7 @@ def perceive(organism, world, claims=None):
     """
     claims = claims or {}
     profile = BEHAVIOR[organism.species]
-    reach = profile["perception"]
+    reach = perception_of(organism)
     kind = SPECIES[organism.species]["type"]
 
     perception = Perception()
@@ -175,7 +184,7 @@ def decide(organism, world, claims=None):
 
     if perception.threats and speed > 0 and profile["perception"] > 0:
         distance = world.distance(organism, perception.threats[0])
-        fear = profile["caution"] * (1 - distance / profile["perception"])
+        fear = profile["caution"] * (1 - distance / perception_of(organism))
 
     # --- Appetite: how much do I want to eat? ---
     appetite = need

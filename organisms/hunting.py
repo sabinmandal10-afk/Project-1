@@ -1,5 +1,6 @@
 from data.species import SPECIES
 from organisms.energy import energy_room
+from organisms.evolution import effective_speed
 
 
 # Percentage of prey energy converted into predator energy
@@ -56,10 +57,7 @@ def prey_density_factor(predator, prey, world):
 def hunt_chance(predator, prey, world=None):
     """Probability that an attack in range succeeds."""
 
-    speed_gap = (
-        SPECIES[predator.species]["movement_speed"]
-        - SPECIES[prey.species]["movement_speed"]
-    )
+    speed_gap = effective_speed(predator) - effective_speed(prey)
 
     chance = (
         BASE_HUNT_SUCCESS
@@ -137,6 +135,10 @@ def hunt(predator, world, prey):
     # 10. Transfer energy to predator
     predator.energy += energy_gained
 
+    tracker = getattr(world, "lineage_tracker", None)
+    if tracker is not None:
+        tracker.record_meal(predator, amount=energy_gained, source_role="herbivore")
+
     # 11. Store remaining energy in prey
     prey.energy = remaining_energy
 
@@ -144,6 +146,7 @@ def hunt(predator, world, prey):
     prey.status = "Dead"
     prey.death_cause = "predation"
     world.stats["kills"] += 1
+    world.stats[f"ate:{predator.species}>{prey.species}"] += 1
 
     # 13. Process prey death
     prey.process_death(world)

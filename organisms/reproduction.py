@@ -1,5 +1,6 @@
 from data.species import SPECIES
 from organisms.factory import create_organism
+from organisms import evolution
 
 
 # Per-species reproduction rules.
@@ -118,6 +119,7 @@ def reproduce(organism, world):
     # Offspring is created from the species template, then given its share
     offspring = create_organism(organism.species)
     offspring.energy = cost * OFFSPRING_ENERGY_SHARE
+    evolution.inherit(organism, offspring, world.rng)
 
     # Energy not passed on becomes organic remains
     world.add_organic_remains(cost - offspring.energy, organism.x, organism.y)
@@ -128,6 +130,14 @@ def reproduce(organism, world):
     offspring.x, offspring.y = world.clamp(organism.x + dx, organism.y + dy)
 
     world.add_organism(offspring)
+
+    tracker = getattr(world, "lineage_tracker", None)
+    if tracker is not None:
+        tracker.register_birth(
+            offspring,
+            turn=getattr(world, "turn", 0),
+            parents=[organism],
+        )
 
     print(f"{organism.name} gave birth to {offspring.name}!")
 

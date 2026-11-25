@@ -24,6 +24,11 @@ class Organism:
         # Where the organism is currently searching toward (set by its AI)
         self.wander_target = None
 
+        # Heritable traits (multipliers); see organisms/evolution.py
+        self.speed_gene = 1.0
+        self.sense_gene = 1.0
+        self.base_metabolism = metabolism
+
     def advance_turn(self, world):
 
         if self.status == "Dead":
@@ -71,6 +76,14 @@ class Organism:
         world.add_organic_remains(remains, self.x, self.y)
         world.stats["deaths"] += 1
         world.stats[f"deaths_{self.death_cause or 'unknown'}"] += 1
+
+        tracker = getattr(world, "lineage_tracker", None)
+        if tracker is not None:
+            tracker.record_death(
+                self,
+                turn=getattr(world, "turn", 0),
+                cause=self.death_cause or "unknown",
+            )
 
         self.energy = 0
         self.health = 0

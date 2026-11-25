@@ -1177,6 +1177,322 @@ def test_viewer_selection_and_save():
 
 # -------------------------------------------------------------------- main
 
+# ------------------------------------------------------------ Phase 7 tests
+# Nutrient cycle, evolution, camera, teaching content and the Lab.
+
+def test_nutrient_cycle():
+    section("nutrient cycle")
+    from environment.world import FERTILITY_BONUS, FERTILITY_SATURATION
+    w = World(100, 100, seed=1)
+    check("soil starts bare", w.fertility_at(5, 5) == 0.0)
+    w.add_fertility(5, 5, FERTILITY_SATURATION)
+    check("nutrients enrich the soil", w.fertility_at(5, 5) == 1.0)
+    check("far away soil stays bare", w.fertility_at(95, 95) == 0.0)
+
+    # rich soil grows plants faster
+    a, b = create_organism("Verdant"), create_organism("Verdant")
+    a.x, a.y, b.x, b.y = 5, 5, 95, 95
+    a.energy = b.energy = 50
+    w.add_organism(a); w.add_organism(b)
+    gain_rich = photosynthesize(a, w)
+    gain_bare = photosynthesize(b, w)
+    check("rich soil boosts photosynthesis",
+          abs(gain_rich / gain_bare - (1 + FERTILITY_BONUS)) < 1e-9, f"{gain_rich} vs {gain_bare}")
+
+    # rotting remains feed the soil
+    w2 = World(100, 100, seed=1)
+    w2.add_organic_remains(100, 50, 50)
+    before = w2.fertility_at(50, 50)
+    w2.decay_remains()
+    check("rotting remains enrich soil", w2.fertility_at(50, 50) > before)
+
+    # switching it off restores the old behaviour exactly
+    w3 = World(100, 100, seed=1)
+    w3.nutrient_cycle = False
+    w3.add_fertility(5, 5, 999)
+    check("nutrient cycle can be disabled", w3.fertility_at(5, 5) == 0.0 and not w3.fertility)
+
+    # soil leaches away slowly
+    w4 = World(100, 100, seed=1)
+    w4.add_fertility(5, 5, 100)
+    for _ in range(50):
+        w4.decay_fertility()
+    check("soil nutrients decay", 0 < w4.fertility[(0, 0)] < 100)
+
+
+def test_evolution():
+    section("evolution")
+    import random
+    import organisms.evolution as evo
+    from organisms.hunting import hunt_chance
+    parent = create_organism("Grazer")
+    child = create_organism("Grazer")
+    check("genes start neutral", parent.speed_gene == 1.0 and parent.sense_gene == 1.0)
+
+    parent.speed_gene, parent.sense_gene = 1.4, 1.2
+    rng = random.Random(1)
+    evo.inherit(parent, child, rng)
+    check("child inherits close to parent", abs(child.speed_gene - 1.4) < 0.3)
+    check("genes stay in range", all(evo.GENE_MIN <= g <= evo.GENE_MAX
+                                     for g in (child.speed_gene, child.sense_gene)))
+    check("fast animals burn more energy", child.metabolism > child.base_metabolism)
+
+    # producers never evolve
+    plant, seed = create_organism("Verdant"), create_organism("Verdant")
+    evo.inherit(plant, seed, rng)
+    check("producers do not evolve", seed.speed_gene == 1.0)
+
+    # speed gene matters in a hunt
+    pred, prey = create_organism("Ravager"), create_organism("Grazer")
+    base = hunt_chance(pred, prey)
+    prey.speed_gene = 1.5
+    check("faster prey is harder to catch", hunt_chance(pred, prey) < base)
+
+    # switch off: nothing changes
+    evo.ENABLED = False
+    try:
+        kid = create_organism("Grazer")
+        evo.inherit(parent, kid, rng)
+        check("evolution can be frozen", kid.speed_gene == 1.0)
+    finally:
+        evo.ENABLED = True
+
+    # genes really drift over a run
+    world, rec, _ = run_gaia.run(turns=300, seed=2)
+    spread = {o.speed_gene for o in world.living_organisms("Grazer")}
+    check("a real run produces varied genes", len(spread) > 3, f"{len(spread)} distinct")
+
+
+def test_camera():
+    section("camera")
+    from types import SimpleNamespace as NS
+    from Interface.camera import Camera
+    rect = NS(x=12, y=12, w=900, h=800, centerx=12 + 450, centery=12 + 400)
+    cam = Camera(100, 100)
+    ok = True
+    for wx, wy in [(0, 0), (50, 50), (100, 100), (20, 80)]:
+        sx, sy = cam.world_to_screen(wx, wy, rect)
+        ok &= abs(sx - (rect.x + wx / 100 * rect.w)) < 1e-6
+        ok &= abs(sy - (rect.y + rect.h - wy / 100 * rect.h)) < 1e-6
+    check("zoom 1 matches the original mapping", ok)
+
+    cam.zoom_at(2.0, 25, 75)
+    for _ in range(300):
+        cam.update(0.016)
+    sx, sy = cam.world_to_screen(25, 75, rect)
+    wx, wy = cam.screen_to_world(sx, sy, rect)
+    check("screen <-> world round trip", abs(wx - 25) < 1e-6 and abs(wy - 75) < 1e-6)
+    left, bottom, right, top = cam.visible_world()
+    check("view stays inside the world",
+          left >= -1e-6 and bottom >= -1e-6 and right <= 100 + 1e-6 and top <= 100 + 1e-6)
+    cam.reset()
+    for _ in range(300):
+        cam.update(0.016)
+    check("reset returns to the full map", cam.zoom == 1.0 and cam.is_default)
+
+
+def test_education_content():
+    section("teaching content")
+    from Interface import education as edu
+    from data.species import SPECIES
+    check("every species has a card", all(edu.card_for(s)["blurb"] for s in SPECIES))
+    check("food web has an arrow per diet entry", len(edu.web_edges()) >= 10)
+    check("every web node is placed", all(s in edu.WEB_NODES for s in SPECIES))
+    edge_names = {n for e in edu.web_edges() for n in e[:2]}
+    check("web edges only use placed nodes", edge_names <= set(edu.WEB_NODES))
+    check("showcase has steps and a length", edu.showcase_length() > 200)
+    starts = [t for t, _ in edu.showcase_schedule()]
+    check("showcase steps are in order", starts == sorted(starts))
+    check("every detector event has a lesson",
+          all(edu.lesson_for(k) for k in events_mod.COOLDOWN))
+
+    world, rec, _ = run_gaia.run(turns=120, seed=3)
+    snap = take_snapshot(world)
+    levels = dict((n, e) for n, e, _ in edu.trophic_levels(snap))
+    check("producers hold the most energy", levels["Producers"] > levels["Predators"])
+    check("seasons are named", edu.season_name(world) in edu.SEASONS)
+    check("mortality adds up", sum(n for _, n, _ in edu.mortality(rec.rows, 100)) > 0)
+
+
+def test_lab():
+    section("lab experiments")
+    from Interface.experiments import Lab, PREDATORS
+    sim, rec, stress = run_gaia.build_simulation(seed=3)
+    lab = Lab(sim.world)
+    sim.pre_turn_hooks.append(lab)
+    with quiet():
+        for _ in range(40):
+            sim.advance_turn()
+    with quiet():
+        lab.toggle("no_predators")
+        for _ in range(3):
+            sim.advance_turn()
+    check("no_predators removes every predator",
+          sum(len(sim.world.living_organisms(p)) for p in PREDATORS) == 0)
+    lab.toggle("no_predators")
+
+    before = len(sim.world.living_organisms())
+    with quiet():
+        lab.toggle("meteor")
+    check("meteor kills things and remembers where", lab.last_meteor is not None
+          and len(sim.world.living_organisms()) < before)
+
+    n = len(sim.world.living_organisms("Grazer"))
+    with quiet():
+        lab.toggle("baby_boom")
+    check("baby boom adds grazers", len(sim.world.living_organisms("Grazer")) == n + 25)
+
+    seasons = sim.world.season_length
+    lab.toggle("endless_summer")
+    check("endless summer stops the seasons", sim.world.season_length is None)
+    lab.toggle("barren_soil")
+    check("barren soil switches the nutrient cycle off", not sim.world.nutrient_cycle)
+    lab.clear()
+    check("clearing restores everything",
+          sim.world.season_length == seasons and sim.world.nutrient_cycle and not lab.active)
+
+
+def test_snapshot_additions():
+    section("snapshot: genes, soil and stats")
+    world, rec, _ = run_gaia.run(turns=150, seed=4)
+    snap = take_snapshot(world)
+    check("traits per species", set(snap.traits) == set(snap.counts))
+    check("soil cells are reported", len(snap.fertility) > 0 and 0 <= snap.fertility_mean <= 1)
+    check("meal counters per food-web arrow",
+          any(k.startswith("ate:") for k in snap.stats))
+    animals = [o for o in snap.organisms if o.kind != "Producer"]
+    check("organisms carry genes and lifespan",
+          all(o.lifespan > 0 and o.speed_gene > 0 for o in animals))
+
+
+def test_lab_buttons_and_reset():
+    section("lab: instant effect and a Reset that restores")
+    from Interface.experiments import Lab, PREDATORS, DECOMPOSERS
+    sim, rec, stress = run_gaia.build_simulation(seed=3)
+    lab = Lab(sim.world)
+    sim.pre_turn_hooks.append(lab)
+    w = sim.world
+    with quiet():
+        for _ in range(40):
+            sim.advance_turn()
+
+    # switches act immediately (the viewer may be paused)
+    lab.toggle("no_predators")
+    check("no_predators works with no turn running",
+          sum(len(w.living_organisms(p)) for p in PREDATORS) == 0)
+    lab.toggle("no_decomposers")
+    check("no_decomposers works with no turn running",
+          sum(len(w.living_organisms(d)) for d in DECOMPOSERS) == 0)
+
+    # turning a switch off brings the species back
+    lab.toggle("no_predators")
+    check("switching no_predators off restores predators",
+          all(len(w.living_organisms(p)) > 0 for p in PREDATORS), str(lab.last_restored))
+
+    # Reset undoes every switch and restores what was wiped out
+    for key in ("barren_soil", "no_evolution", "endless_summer"):
+        lab.toggle(key)
+    seasons = 120
+    lab.clear()
+    import organisms.evolution as evo
+    check("reset switches everything off", not lab.active)
+    check("reset restores seasons, soil and evolution",
+          w.season_length == seasons and w.nutrient_cycle and evo.ENABLED)
+    check("reset brings the decomposers back",
+          all(len(w.living_organisms(d)) > 0 for d in DECOMPOSERS))
+
+    # a species that is alive is never duplicated by a reset
+    before = len(w.living_organisms("Mycel"))
+    lab.toggle("no_decomposers")
+    lab.toggle("no_decomposers")
+    check("restoring uses founder numbers", len(w.living_organisms("Mycel")) <= 4)
+    lab.clear()
+    check("reset with nothing active is harmless", not lab.active)
+
+
+def test_presenter_controls():
+    section("presenter controls: story, keys, pause on caption, step menu, notes")
+    import os
+    os.environ["SDL_VIDEODRIVER"] = "dummy"
+    import pygame
+    pygame.init()
+    from Interface import education as edu
+    from Interface.showcase import ShowcaseDirector
+
+    # 1. Story steps and speaker notes integrity
+    schedule = edu.showcase_schedule()
+    check("showcase has complete multi-chapter story", len(schedule) == 13)
+    check("all showcase steps have speaker notes", all(s.get("speaker_note") for _, s in schedule))
+
+    # 2. ShowcaseDirector presenter features
+    director = ShowcaseDirector()
+    check("director loads all showcase steps", len(director.steps) == len(schedule))
+    check("speaker notes hidden by default", director.show_speaker_notes is False)
+    check("pause on caption off by default", director.pause_on_caption is False)
+
+    director.start()
+    check("director starts at step 0", director.index == 0)
+    check("current step matches first story step", director.current_step.title == schedule[0][1]["title"])
+
+    # Next / Back stepping
+    director.next_step()
+    check("next_step advances index to 1", director.index == 1)
+    director.prev_step()
+    check("prev_step returns index to 0", director.index == 0)
+
+    # Jump to any part via step index
+    director.jump_to(7)
+    check("jump_to jumps to chosen step", director.index == 7)
+
+    # Toggles
+    director.show_speaker_notes = True
+    check("speaker notes toggle on", director.show_speaker_notes is True)
+    summary = director.summary_dict()
+    check("summary dict includes note when shown", bool(summary["speaker_note"]))
+    director.show_speaker_notes = False
+    check("summary dict hides note when hidden", director.summary_dict()["speaker_note"] == "")
+
+    # 3. PygameViewer presenter integration
+    from Interface.pygame_viewer import PygameViewer
+    sim, rec, stress = run_gaia.build_simulation(seed=2)
+    viewer = PygameViewer(sim, recorder=rec, stress=stress, showcase=True, pause_on_caption=True, speaker_notes=False)
+    viewer._screen = pygame.Surface((1400, 840))
+    viewer._start_showcase()
+
+    check("showcase started", viewer.showcase_on is True)
+    check("pause on caption preserved in viewer", viewer.director.pause_on_caption is True)
+    check("simulation automatically pauses at first caption", viewer.paused is True)
+
+    # Next step (PageDown / K / Right)
+    viewer.skip_showcase_step()
+    check("Next key advances showcase step", viewer._showcase_idx == 1 and viewer.director.index == 1)
+    check("stays paused at next caption", viewer.paused is True)
+
+    # Space/Return unpauses to let simulation run until next caption
+    viewer._on_key(pygame.K_SPACE)
+    check("Space unpauses at caption", viewer.paused is False)
+
+    # Previous step (PageUp / Left)
+    viewer.prev_showcase_step()
+    check("Back key goes to previous step", viewer._showcase_idx == 0 and viewer.director.index == 0)
+
+    # Step Menu
+    viewer.toggle_step_menu()
+    check("step menu opens", viewer.show_step_menu is True)
+    viewer._on_key(pygame.K_3)  # press '3' in step menu -> jump to step index 2
+    check("number key jumps directly to step", viewer._showcase_idx == 2 and viewer.show_step_menu is False)
+
+    # Speaker notes toggle
+    viewer.toggle_speaker_notes()
+    check("toggle_speaker_notes shows notes", viewer.director.show_speaker_notes is True)
+    viewer.toggle_speaker_notes()
+    check("toggle_speaker_notes hides notes", viewer.director.show_speaker_notes is False)
+
+    # Pause on caption toggle
+    viewer.toggle_pause_on_caption()
+    check("toggle_pause_on_caption turns mode off", viewer.director.pause_on_caption is False)
+
+
 if __name__ == "__main__":
     for t in [
         test_environment_multipliers,
@@ -1204,6 +1520,14 @@ if __name__ == "__main__":
         test_viewer_controls,
         test_viewer_drawing,
         test_viewer_selection_and_save,
+        test_nutrient_cycle,
+        test_evolution,
+        test_camera,
+        test_education_content,
+        test_lab,
+        test_snapshot_additions,
+        test_lab_buttons_and_reset,
+        test_presenter_controls,
     ]:
         try:
             t()

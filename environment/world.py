@@ -1,6 +1,7 @@
 import math
 import random
 from collections import Counter
+from organisms.lineage_flow import LineageAndFlowTracker
 
 
 # Remains that fall within this distance of existing remains join that patch
@@ -8,6 +9,15 @@ REMAINS_MERGE_RADIUS = 2.0
 
 # Fraction of every remains patch that rots away each turn
 REMAINS_DECAY = 0.005
+
+# --- Nutrient cycle: rotting remains enrich the soil, and rich soil grows
+# plants faster. The soil is a coarse grid of cells.
+NUTRIENT_CYCLE = True
+FERTILITY_CELL = 10.0         # world units per soil cell
+FERTILITY_SATURATION = 300.0  # soil this rich gives the full growth bonus
+FERTILITY_BONUS = 0.5         # +50% photosynthesis on fully rich soil
+FERTILITY_DECAY = 0.01        # soil nutrients wash away slowly
+FERTILITY_FROM_ROT = 0.6      # share of rotting remains that enriches the soil
 
 
 class RemainsPatch:
@@ -32,6 +42,7 @@ class World:
         self.remains_decay = REMAINS_DECAY
         self.turn = 0
         self.birth_counter = 0
+        self.lineage_tracker = LineageAndFlowTracker()
 
         # Seeded generator: varied runs, but any run can be replayed exactly
         self.rng = random.Random(seed)
@@ -51,6 +62,10 @@ class World:
 
         # Running tally of what happens in the world (births, kills, meals...)
         self.stats = Counter()
+
+        # Soil fertility: {(cell_x, cell_y): nutrients}
+        self.nutrient_cycle = NUTRIENT_CYCLE
+        self.fertility = {}
 
     # ---------- environment ----------
 
@@ -233,14 +248,60 @@ class World:
         return taken
 
     def decay_remains(self):
-        """Remains rot away a little every turn."""
+        """Remains rot away a little every turn, feeding the soil as they go."""
 
         for patch in self.remains_patches:
-            patch.amount *= (1 - self.remains_decay)
+            lost = patch.amount * self.remains_decay
+            patch.amount -= lost
+            self.add_fertility(patch.x, patch.y, lost * FERTILITY_FROM_ROT)
 
-        self.remains_patches = [
-            p for p in self.remains_patches if p.amount >= 0.5
-        ]
+        survivors = []
+        for p in self.remains_patches:
+            if p.amount >= 0.5:
+                survivors.append(p)
+            else:
+                # a pile that has all but vanished sinks into the ground
+                self.add_fertility(p.x, p.y, p.amount * FERTILITY_FROM_ROT)
+        self.remains_patches = survivors
+
+        self.decay_fertility()
+
+    # ---------- soil fertility (nutrient cycle) ----------
+
+    def _cell(self, x, y):
+        return (int(x // FERTILITY_CELL), int(y // FERTILITY_CELL))
+
+    def add_fertility(self, x, y, amount):
+        """Return nutrients to the soil at (x, y)."""
+
+        if not self.nutrient_cycle or amount <= 0:
+            return
+
+        cell = self._cell(x, y)
+        self.fertility[cell] = self.fertility.get(cell, 0.0) + amount
+        self.stats["nutrients_returned"] += amount
+
+    def fertility_at(self, x, y):
+        """How rich the soil is at a point: 0.0 (bare) .. 1.0 (saturated)."""
+
+        if not self.nutrient_cycle:
+            return 0.0
+
+        value = self.fertility.get(self._cell(x, y), 0.0)
+        return min(1.0, value / FERTILITY_SATURATION)
+
+    def decay_fertility(self):
+        """Nutrients slowly leach away; empty cells are forgotten."""
+
+        if not self.fertility:
+            return
+
+        keep = 1 - FERTILITY_DECAY
+        self.fertility = {
+            cell: value * keep
+            for cell, value in self.fertility.items()
+            if value * keep > 0.05
+        }
 
     # ---------- display ----------
 

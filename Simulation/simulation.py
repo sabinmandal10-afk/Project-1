@@ -37,6 +37,10 @@ class Simulation:
         self.world.turn += 1
         self.world.update_season()
 
+        tracker = getattr(self.world, "lineage_tracker", None)
+        if tracker is not None:
+            tracker.begin_turn()
+
         print(f"\n========== TURN {self.world.turn} ==========")
 
         for hook in self.pre_turn_hooks:
@@ -104,3 +108,5 @@ class Simulation:
 
         for hook in self.post_turn_hooks:
             hook(self)
+
+        return self.world.turn
